@@ -4,10 +4,12 @@ from sqlalchemy.orm import Session
 from app.db import Base, engine, SessionLocal
 from app.models import User
 from app.oauth.slack import router as slack_oauth_router
+from app.mcp.websocket_server import router as mcp_websocket_router
 
 app = FastAPI()
 
 app.include_router(slack_oauth_router)
+app.include_router(mcp_websocket_router)
 
 @app.on_event("startup")
 def on_startup():
