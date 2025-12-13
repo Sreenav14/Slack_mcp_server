@@ -78,17 +78,17 @@ def slack_oauth_callback(
     
     # 1. Validate State
     if not state or state not in oauth_state_store:
-        raise HTTPException(status_code = 400, details = "Invalid or missing state")
+        raise HTTPException(status_code = 400, detail = "Invalid or missing state")
     
     user_id = oauth_state_store.pop(state) # consume state
     
     # 2. Handle user denial or error
     if error:
         # You can redirect to UI with an error message instead.
-        raise HTTPException(status_code = 400, details = f"OAuth error: {error}")
+        raise HTTPException(status_code = 400, detail= f"OAuth error: {error}")
     
     if not code:
-        raise HTTPException(status_code = 400, details = "Missing code from Slack")
+        raise HTTPException(status_code = 400, detail = "Missing code from Slack")
     
     #  Exchange code for token
     token_url = "https://slack.com/api/oauth.v2.access"
@@ -108,7 +108,7 @@ def slack_oauth_callback(
         details = resp_data.get("error", "unknown_error")
         raise HTTPException(
             status_code = 400,
-            details = f"Slack OAuth token exchange failed: {details}",
+            detail = f"Slack OAuth token exchange failed: {details}",
         )
         
     # 4. Extract relevant fields from slack response
