@@ -1,6 +1,10 @@
 from typing import Optional, Any, Dict, List, AsyncGenerator
 from fastapi import WebSocket, WebSocketDisconnect, APIRouter
+
 from app.auth import get_user_id_from_session_token
+from app.db import SessionLocal
+from app.models import SlackConnection
+from app.slack.client import SlackClient
 
 router = APIRouter()
 
@@ -99,6 +103,145 @@ async def slack_mcp_websocket(websocket: WebSocket):
                     },
                 }
                 await websocket.send_json(tools_payload)
+            
+            elif method == "tools.call":
+                tool_name = params.get("name")
+                args = params.get("arguments") or {}
+                
+                # 1. Handle list_channels tool
+                if tool_name == "list_channels":
+                    
+                    # create db session
+                    db = SessionLocal()
+                    
+                    # look up slack connection for this user
+                    conn = db.query(SlackConnection).filter(SlackConnection.user_id==user_id).first()
+                    
+                    if not conn:
+                        await websocket.send_json({
+                            "jsonrpc" : "2.0",
+                            "id" : msg_id,
+                            "error" : {
+                                "code" : -32000,
+                                "message" : "No slack connection found for this user",
+                            },
+                        })
+                        continue
+                    
+                    client = SlackClient(conn.bot_access_token)
+                    
+                    # Read arguments
+                    limit = args.get("limit", 20)
+                    include_private = args.get("include_private", False)
+                    
+                    # Slack API Call
+                    slack_response = client.list_channels(
+                        limit=limit,
+                        include_private = include_private
+                    )
+                    
+                    channels = slack_response.get("channels", [])
+                    next_cursor = slack_response.get("response_metadata", {}).get("next_cursor")
+                    
+                    # Transform results
+                    transformed = {
+                        "channels" :[
+                            {
+                                "id" : ch.get("id"),
+                                "name" : ch.get("name"),
+                                "is_private" : ch.get("is_private", False),
+                                "members_count" : ch.get("num_members", None)
+                            }
+                            for ch in channels
+                        ],
+                        "next_cursor" : next_cursor,
+                    }
+                    # Send Response
+                    
+                    await websocket.send_json(
+                        {
+                            "jsonrpc" : "2.0",
+                            "id" : msg_id,
+                            "result" : transformed,
+                        }
+                    )
+            
+                elif tool_name == "send_message":
+                    
+                    # Read and validate arguments
+                    
+                    channel_id = args.get("channel_id")
+                    text = args.get("text")
+                    thread_ts = args.get("thread_ts")
+                    reply_broadcast = args.get("reply_broadcast")
+                    
+                    # Open database session
+                    db = SessionLocal()
+                    try:
+                        conn = (db.query(SlackConnection).filter(SlackConnection.user_id==user_id).first())
+                        
+                        if not conn:
+                            await websocket.send_json({
+                                "jsonrpc" : "2.0",
+                                "id" : msg_id,
+                                "error" : {
+                                    "code" : -32000,
+                                    "message" : "No slack connection found for this user",
+                                }
+                            })
+                            continue
+                        
+                        # 3. Build Slack Cilent
+                        client = SlackClient(conn.bot_access_token)
+                        
+                        # 4. call slack chat.postMessage via our client
+                        try:
+                            slack_resp = client.send_message(
+                                channel_id = channel_id,
+                                text = text,
+                                thread_ts = thread_ts,
+                                reply_broadcast = reply_broadcast,
+                            )
+                        except Exception as e:
+                            await websocket.send_json({
+                                "jsonrpc" : "2.0",
+                                "id" : msg_id,
+                                "error" : {
+                                    "code" : -32000,
+                                    "message" : f"Error sending message: {str(e)}",
+                                }
+                            })
+                            continue
+                        
+                        # extract useful fields from slack response
+                        
+                        channel_out = slack_resp.get("channel")
+                        message_ts = slack_resp.get("ts")
+                        
+                        
+                        # thread_ts can be in two places depending on context
+                        thread_ts_out = None
+                        if "message" in slack_resp and isinstance(slack_resp["message"], dict):
+                            thread_ts_out = slack_resp["message"].get("thread_ts")
+                        if not thread_ts_out: 
+                            thread_ts_out = slack_resp.get(thread_ts)
+                            
+                        result_payload = {
+                            "ok" : True,
+                            "channel" : channel_out,
+                            "message_ts" : message_ts,
+                            "thread_ts" : thread_ts_out,
+                        }
+                        
+                        await websocket.send_json({
+                            "jsonrpc" : "2.0",
+                            "id" : msg_id,
+                            "result" : result_payload,
+                        })
+                        
+                    finally:
+                        db.close()
+            
             else:
                 
                 error_payload = {
@@ -106,7 +249,7 @@ async def slack_mcp_websocket(websocket: WebSocket):
                     "id" : msg_id,
                     "error" : {
                         "code" : -32603,
-                        "message" : f"Method {method} not implemented yet",
+                        "message" : f"Method {method} not implemented ",
                     },
                 }
                 await websocket.send_json(error_payload)

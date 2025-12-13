@@ -33,7 +33,7 @@ def slack_oauth_start(db: Session = Depends(get_db)):
     user_id = DEV_USER_ID
     
     # Generate random state token to protect against CSRF 
-    state = secrets.toekn_urlsafe(32)
+    state = secrets.token_urlsafe(32)
     oauth_state_store[state] = user_id
     
     # Slack OAuth authorize url
@@ -53,7 +53,7 @@ def slack_oauth_start(db: Session = Depends(get_db)):
     params = {
         "client_id": settings.SLACK_CLIENT_ID,
         "scope": scope_str,
-        "redirect_url": settings.SLACK_REDIRECT_URI,
+        "redirect_uri": settings.SLACK_REDIRECT_URI,
         "state": state,
     }
     
