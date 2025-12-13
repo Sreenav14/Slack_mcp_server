@@ -133,7 +133,7 @@ def slack_oauth_callback(
     existing = (
         db.query(SlackConnection).filter(
             SlackConnection.user_id == user_id,
-            SlackConnection.team_id == team_id,
+            SlackConnection.slack_team_id == team_id,
         ).first()
     )
     
@@ -145,7 +145,7 @@ def slack_oauth_callback(
     else:
         conn = SlackConnection(
             user_id = user_id,
-            team_id = team_id,
+            slack_team_id = team_id,
             slack_team_name= team_name,
             bot_access_token = access_token,
             scope=scope,
