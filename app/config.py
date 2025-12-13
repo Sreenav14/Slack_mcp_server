@@ -14,7 +14,6 @@ class settings:
         
         self.SLACK_REDIRECT_URI: str = os.getenv(
             "SLACK_REDIRECT_URI",
-            "http://localhost:8000/auth/slack/callback"
-        )
+            "https://slack-mcp-server-6809.onrender.com/oauth/slack/callback"        )
 
 settings = settings()
