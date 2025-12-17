@@ -1,41 +1,54 @@
 import secrets
 from typing import Optional
-
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 import httpx
-from fastapi import HTTPException, status, Depends, Request, APIRouter
+from fastapi import HTTPException, status, Depends, Request, APIRouter, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import SlackConnection
-from app.auth import DEV_USER_ID
+from app.models import SlackConnection, OAuthState
+from app.auth.jwt import get_user_id_from_session_token
 
 router = APIRouter(prefix="/oauth/slack", tags=["Slack OAuth"])
 
-# In-memory store for OAuth state for mvp (per-process only)
-oauth_state_store : dict[str,int] = {}
-# maps: state -> user_id
+
 
 @router.get("/start")
-def slack_oauth_start(db: Session = Depends(get_db)):
+def slack_oauth_start(request: Request, db: Session = Depends(get_db)):
     """ 
     Start the Slack OAuth flow for the current user.
     
-    for MVP:
-        - we assume dev user with id=DEV_USER_ID is logged in.
-        - we generate a random `state`.
-        - we store `state -> user_id` in a simple in-memory store.
-        - we direct to Slack's OAuth authorization URL.
+    Steps:
+        - Read session_token
+        - Decode it -> user_id
+        - create a random OAuthState and store it in the database
+        - Redirect user to slack OAuth URL
     
     """
-    user_id = DEV_USER_ID
+    session_token = request.query_params.get("session_token")
+    user_id = get_user_id_from_session_token(session_token)
     
-    # Generate random state token to protect against CSRF 
+    if not user_id:
+        raise HTTPException(status_code = 401, detail = "Unauthorized")
+    
+    
+    # Create a DB-Backed OAuth State 
     state = secrets.token_urlsafe(32)
-    oauth_state_store[state] = user_id
+    expires_at = datetime.utcnow() + timedelta(minutes=10)   
     
+    db_State = OAuthState(
+        provider = "slack",
+        state = state,
+        user_id = user_id,
+        expires_at = expires_at,
+        used = False,
+    )
+    db.add(db_State)
+    db.commit()
+     
     # Slack OAuth authorize url
     base_authorize_url = "https://slack.com/oauth/v2/authorize"
     
@@ -70,21 +83,41 @@ def slack_oauth_callback(
 ):
     """ 
     Slack redirects here after the user approves or denies.
-    We:
-        - Validate state.
-        - Exchange code for access token.
-        - Store/update SlackConnection for the user.
+    
+    Steps:
+        - Validate the State from DB (exists, not used, not expired)
+        - If error or missing code, fail
+        - Exchange code for access token
+        - Store/update SlackConnection for the used_id
+        - Mark state as used
     """
     
     # 1. Validate State
-    if not state or state not in oauth_state_store:
+    if not state:
         raise HTTPException(status_code = 400, detail = "Invalid or missing state")
     
-    user_id = oauth_state_store.pop(state) # consume state
+    
+    # 1. Fetch state record From DB
+    st = (
+        db.query(OAuthState).filter(
+        OAuthState.provider == "slack", OAuthState.state == state).first()
+        )
+    
+    if not st:
+        raise HTTPException(status_code = 400, detail = "Invalid or expired state")
+    
+    if st.used:
+        raise HTTPException(status_code = 400, detail = "State already used")
+    
+    if datetime.utcnow() > st.expires_at:
+        raise HTTPException(status_code = 400, detail = "State expired")
+    
+    user_id = st.user_id
     
     # 2. Handle user denial or error
     if error:
-        # You can redirect to UI with an error message instead.
+        st.used = True
+        db.commit()
         raise HTTPException(status_code = 400, detail= f"OAuth error: {error}")
     
     if not code:
@@ -100,7 +133,7 @@ def slack_oauth_callback(
         "redirect_uri": settings.SLACK_REDIRECT_URI,
     }
     
-    with httpx.Client() as client:
+    with httpx.Client(timeout=20) as client:
         resp = client.post(token_url, data=data)
         resp_data = resp.json()
         
@@ -142,6 +175,7 @@ def slack_oauth_callback(
         existing.scope = scope
         existing.authed_user_id = authed_user_id
         existing.status = "active"
+        existing.slack_team_name = team_name
     else:
         conn = SlackConnection(
             user_id = user_id,
@@ -154,8 +188,12 @@ def slack_oauth_callback(
         )
         db.add(conn)
         
-    db.commit()
     
+    # Mark OAuth State as used
+    st.used = True
+    
+    db.commit()
+
     # 6. Redirect user back to same page in app
     # redirected to frontend UI
     return {"success": True, "message": "Slack connected successfully"}

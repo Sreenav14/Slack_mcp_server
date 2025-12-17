@@ -15,5 +15,7 @@ class settings:
         self.SLACK_REDIRECT_URI: str = os.getenv(
             "SLACK_REDIRECT_URI",
             "https://slack-mcp-server-6809.onrender.com/oauth/slack/callback"        )
+        
+        self.JWT_EXP_MINUTES: int = int(os.getenv("JWT_EXP_MINUTES", "43200"))
 
 settings = settings()

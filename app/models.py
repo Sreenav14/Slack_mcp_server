@@ -9,8 +9,9 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index = True)
-    email = Column(String(255), unique = True, index=True, nullable = True)
+    email = Column(String(255), unique = True, index=True, nullable = False)
     name = Column(String(255), nullable = True)
+    password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default = datetime.utcnow)
     
     # Relationship : one to many slack connections
@@ -52,5 +53,22 @@ class SlackConnection(Base):
             f"<SlackConnection id={self.id} user_id = {self.user_id} "
             f"team = {self.slack_team_name} ({self.slack_team_id}) status = {self.status}>"
         )
+    
+    
+    
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+    
+    id = Column(Integer, primary_key=True, index = True)
+    provider = Column(String(32), nullable = False)
+    state = Column(String(128), unique = True, index = True, nullable = False)
+    
+    user_id = Column(Integer, ForeignKey("users.id"), nullable = False)
+    used = Column(Boolean, default = False, nullable = False)
+    
+    created_at = Column(DateTime, default = datetime.utcnow, nullable = False)
+    expires_at = Column(DateTime, nullable = False)
+    
+    user = relationship("User")
     
     
