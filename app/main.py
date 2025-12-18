@@ -18,7 +18,7 @@ app.include_router(connect_router)
 
 @app.on_event("startup")
 def on_startup():
-   pass
+   Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
