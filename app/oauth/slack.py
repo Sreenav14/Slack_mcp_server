@@ -3,9 +3,10 @@ from typing import Optional
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 import httpx
-from fastapi import HTTPException, status, Depends, Request, APIRouter, Request
+from fastapi import HTTPException, Depends, Request, APIRouter, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from fastapi.responses import HTMLResponse
 
 from app.config import settings
 from app.db import get_db
@@ -158,7 +159,7 @@ def slack_oauth_callback(
     if not access_token or not team_id:
         raise HTTPException(
             status_code = 400,
-            details = "Missing required fields from Slack response",
+            detail = "Missing required fields from Slack response",
         )
         
     # 5. Store or update SlackConnection now
@@ -196,4 +197,14 @@ def slack_oauth_callback(
 
     # 6. Redirect user back to same page in app
     # redirected to frontend UI
-    return {"success": True, "message": "Slack connected successfully"}
+    return HTMLResponse(
+        """ 
+        <html>
+            <body style="font-family: Arial, sans-serif; padding: 20px;">
+                <h1>Slack Connection Successful</h1>
+                <p>You can close this window now.</p>
+            </body>
+        
+        </html>
+        """
+    )
