@@ -24,3 +24,7 @@ def on_startup():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+ 
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Slack MCP Server"}
