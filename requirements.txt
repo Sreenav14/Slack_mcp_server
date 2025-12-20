@@ -1,10 +1,26 @@
+# Web Framework
 fastapi
 uvicorn[standard]
+
+# Database
 sqlalchemy
 psycopg2-binary
+alembic
+
+# HTTP Client
 httpx
-python-dotenv
+
+# Authentication
 pyjwt
 passlib[bcrypt]
-email-validator
 bcrypt==4.0.1
+
+# Validation
+pydantic
+email-validator
+
+# Environment
+python-dotenv
+
+# MCP SDK
+mcp

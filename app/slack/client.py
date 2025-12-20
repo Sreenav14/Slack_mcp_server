@@ -1,4 +1,8 @@
-from typing import Optional, Any, List, Dict
+"""
+Slack API Client - Wrapper for Slack Web API.
+"""
+
+from typing import Optional, Any, Dict
 import httpx
 
 SLACK_API_BASE_URL = "https://slack.com/api"
@@ -99,3 +103,50 @@ class SlackClient:
             data["cursor"] = cursor
 
         return self._request("GET", "conversations.list", data=data)
+
+    def fetch_history(
+        self,
+        channel_id: str,
+        limit: int = 10,
+        cursor: Optional[str] = None,
+        oldest: Optional[str] = None,
+        latest: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch message history from a channel using conversations.history.
+        
+        Args:
+            channel_id: The channel ID to fetch history from
+            limit: Number of messages to return (default: 10, max: 100)
+            cursor: Pagination cursor for next page
+            oldest: Only messages after this Unix timestamp
+            latest: Only messages before this Unix timestamp
+            
+        Returns:
+            Slack's response JSON with messages array
+        """
+        data: Dict[str, Any] = {
+            "channel": channel_id,
+            "limit": min(limit, 100),  # Slack max is 100
+        }
+
+        if cursor:
+            data["cursor"] = cursor
+        if oldest:
+            data["oldest"] = oldest
+        if latest:
+            data["latest"] = latest
+
+        return self._request("GET", "conversations.history", data=data)
+
+    def get_user_info(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get information about a user.
+        
+        Args:
+            user_id: The Slack user ID
+            
+        Returns:
+            Slack's response JSON with user info
+        """
+        return self._request("GET", "users.info", data={"user": user_id})
