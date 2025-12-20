@@ -2,7 +2,7 @@
 """
 Slack MCP Bridge - Connects local MCP clients to remote Slack MCP server.
 
-This bridge translates between stdio (local) and SSE (remote) transports,
+This bridge translates between stdio (local) and HTTP (remote) transports,
 allowing MCP clients like Cursor and Claude Desktop to connect to your
 remote Slack MCP server.
 
@@ -50,19 +50,18 @@ def log(message: str):
     print(f"[Bridge] {message}", file=sys.stderr, flush=True)
 
 
-class SSEBridge:
-    """Bridge between stdio and SSE MCP transports."""
+class HTTPBridge:
+    """Bridge between stdio and HTTP MCP transports."""
 
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.client = httpx.AsyncClient(timeout=30.0)
-        self.initialized = False
 
     async def send_request(self, request: dict) -> dict:
         """Send a request to the MCP server via POST."""
-        url = f"{self.base_url}/mcp/messages?session_token={self.token}"
-        
+        url = f"{self.base_url}/mcp/http?session_token={self.token}"
+
         try:
             response = await self.client.post(
                 url,
@@ -72,12 +71,14 @@ class SSEBridge:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
+            log(f"HTTP Error: {e.response.status_code} - {e.response.text}")
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
                 "error": {"code": -32000, "message": f"HTTP Error: {e.response.status_code}"}
             }
         except Exception as e:
+            log(f"Request error: {e}")
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
@@ -94,9 +95,11 @@ async def read_stdin_line() -> Optional[str]:
     loop = asyncio.get_event_loop()
     try:
         line = await loop.run_in_executor(None, sys.stdin.readline)
-        return line.strip() if line else None
+        if line:
+            return line.strip()
+        return ""  # Empty string means EOF
     except Exception:
-        return None
+        return ""
 
 
 async def main():
@@ -117,15 +120,20 @@ async def main():
     log("Starting Slack MCP Bridge...")
     log(f"Server: {MCP_SERVER_URL}")
 
-    bridge = SSEBridge(MCP_SERVER_URL, SESSION_TOKEN)
+    bridge = HTTPBridge(MCP_SERVER_URL, SESSION_TOKEN)
 
     try:
         while True:
             line = await read_stdin_line()
 
-            if not line:
+            # EOF detection
+            if line == "":
                 log("EOF received, shutting down")
                 break
+
+            # Skip empty lines (just whitespace)
+            if not line:
+                continue
 
             try:
                 request = json.loads(line)
@@ -138,29 +146,12 @@ async def main():
 
             log(f"Request: {method}")
 
-            # Handle initialize locally (MCP handshake)
-            if method == "initialize":
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {
-                            "name": "slack-mcp-bridge",
-                            "version": "1.0.0"
-                        }
-                    }
-                }
-                print(json.dumps(response), flush=True)
-                log("Initialized")
-                continue
-
             # Handle notifications (no response needed)
             if method.startswith("notifications/") or method == "initialized":
+                log(f"Notification: {method}")
                 continue
 
-            # Forward all other requests to remote server
+            # Forward all requests to remote server
             response = await bridge.send_request(request)
             print(json.dumps(response), flush=True)
             log(f"Response: {method}")
