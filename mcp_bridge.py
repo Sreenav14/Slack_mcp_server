@@ -21,7 +21,7 @@ import sys
 import json
 import asyncio
 import os
-from typing import Optional
+from typing import Optional, Any
 
 # Load environment variables
 try:
@@ -35,7 +35,7 @@ try:
 except ImportError:
     print(json.dumps({
         "jsonrpc": "2.0",
-        "id": None,
+        "id": 0,
         "error": {"code": -32000, "message": "httpx not installed. Run: pip install httpx"}
     }), flush=True)
     sys.exit(1)
@@ -50,6 +50,24 @@ def log(message: str):
     print(f"[Bridge] {message}", file=sys.stderr, flush=True)
 
 
+def make_response(msg_id: Any, result: dict) -> dict:
+    """Create a properly formatted JSON-RPC response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id if msg_id is not None else 0,
+        "result": result
+    }
+
+
+def make_error(msg_id: Any, code: int, message: str) -> dict:
+    """Create a properly formatted JSON-RPC error response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id if msg_id is not None else 0,
+        "error": {"code": code, "message": message}
+    }
+
+
 class HTTPBridge:
     """Bridge between stdio and HTTP MCP transports."""
 
@@ -61,29 +79,39 @@ class HTTPBridge:
     async def send_request(self, request: dict) -> dict:
         """Send a request to the MCP server via POST."""
         url = f"{self.base_url}/mcp/http?session_token={self.token}"
+        msg_id = request.get("id", 0)
 
         try:
+            log(f"Sending to: {url}")
             response = await self.client.post(
                 url,
                 json=request,
                 headers={"Content-Type": "application/json"}
             )
+            
+            if response.status_code == 404:
+                log("Server returned 404 - endpoint not found")
+                return make_error(msg_id, -32000, "MCP endpoint not found. Server may not be deployed yet.")
+            
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            log(f"Got response: {json.dumps(result)[:200]}")
+            
+            # Ensure the response has a valid id
+            if result.get("id") is None:
+                result["id"] = msg_id
+            
+            return result
+            
         except httpx.HTTPStatusError as e:
-            log(f"HTTP Error: {e.response.status_code} - {e.response.text}")
-            return {
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "error": {"code": -32000, "message": f"HTTP Error: {e.response.status_code}"}
-            }
+            log(f"HTTP Error: {e.response.status_code} - {e.response.text[:200]}")
+            return make_error(msg_id, -32000, f"HTTP Error: {e.response.status_code}")
+        except httpx.ConnectError as e:
+            log(f"Connection error: {e}")
+            return make_error(msg_id, -32000, "Cannot connect to MCP server")
         except Exception as e:
             log(f"Request error: {e}")
-            return {
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "error": {"code": -32000, "message": str(e)}
-            }
+            return make_error(msg_id, -32000, str(e))
 
     async def close(self):
         """Close the HTTP client."""
@@ -106,14 +134,7 @@ async def main():
     """Main bridge loop."""
     # Validate configuration
     if not SESSION_TOKEN:
-        error = {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {
-                "code": -32000,
-                "message": "SLACK_MCP_TOKEN not set. Create a .env file with your session token."
-            }
-        }
+        error = make_error(0, -32000, "SLACK_MCP_TOKEN not set. Create a .env file with your session token.")
         print(json.dumps(error), flush=True)
         sys.exit(1)
 
@@ -142,29 +163,39 @@ async def main():
                 continue
 
             method = request.get("method", "")
-            msg_id = request.get("id")
+            msg_id = request.get("id", 0)
 
-            log(f"Request: {method}")
+            log(f"Request: {method} (id={msg_id})")
 
             # Handle notifications (no response needed)
             if method.startswith("notifications/") or method == "initialized":
                 log(f"Notification: {method}")
                 continue
 
-            # Forward all requests to remote server
+            # Handle initialize locally for faster response
+            if method == "initialize":
+                response = make_response(msg_id, {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "slack-mcp-bridge",
+                        "version": "1.0.0"
+                    }
+                })
+                print(json.dumps(response), flush=True)
+                log("Initialized locally")
+                continue
+
+            # Forward all other requests to remote server
             response = await bridge.send_request(request)
             print(json.dumps(response), flush=True)
-            log(f"Response: {method}")
+            log(f"Response sent for: {method}")
 
     except KeyboardInterrupt:
         log("Interrupted")
     except Exception as e:
         log(f"Error: {e}")
-        error = {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32000, "message": str(e)}
-        }
+        error = make_error(0, -32000, str(e))
         print(json.dumps(error), flush=True)
     finally:
         await bridge.close()

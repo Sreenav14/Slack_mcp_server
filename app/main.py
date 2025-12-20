@@ -72,12 +72,20 @@ async def mcp_http_endpoint(request: Request, session_token: str = None):
     This is a simpler endpoint that doesn't require SSE.
     Connect using: POST /mcp/http?session_token=<your_token>
     """
+    # Try to parse body first to get request ID
+    msg_id = 0
+    try:
+        body = await request.json()
+        msg_id = body.get("id", 0)
+    except Exception:
+        body = None
+
     if not session_token:
         return JSONResponse(
             status_code=401,
             content={
                 "jsonrpc": "2.0",
-                "id": None,
+                "id": msg_id,
                 "error": {"code": -32001, "message": "session_token is required"}
             }
         )
@@ -88,7 +96,7 @@ async def mcp_http_endpoint(request: Request, session_token: str = None):
             status_code=401,
             content={
                 "jsonrpc": "2.0",
-                "id": None,
+                "id": msg_id,
                 "error": {"code": -32001, "message": "Invalid or expired session token"}
             }
         )
@@ -96,14 +104,12 @@ async def mcp_http_endpoint(request: Request, session_token: str = None):
     # Set user context for this request
     set_current_user(user_id)
 
-    try:
-        body = await request.json()
-    except Exception as e:
+    if body is None:
         return JSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": f"Parse error: {str(e)}"}
+                "id": msg_id,
+                "error": {"code": -32700, "message": "Parse error: Invalid JSON"}
             }
         )
 
